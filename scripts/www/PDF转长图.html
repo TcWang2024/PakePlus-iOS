@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>PDF 超清导出 (8倍采样 + 高质量JPEG)</title>
+    <!-- 引入 PDF.js 核心库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <!-- 引入 JSZip 用于打包逐页导出 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- 引入 FileSaver 用于保存 ZIP -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            background: linear-gradient(145deg, #eef2f7 0%, #d9e0e8 100%);
+            font-family: 'Segoe UI', 'Roboto', 'Noto Sans', system-ui, sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .card {
+            max-width: 1400px;
+            width: 100%;
+            background: rgba(255,255,255,0.96);
+            border-radius: 40px;
+            box-shadow: 0 25px 45px -12px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+        .header {
+            background: #1e2f3f;
+            color: white;
+            padding: 20px 32px;
+        }
+        .header h1 { margin: 0; font-weight: 600; font-size: 1.6rem; }
+        .header p { margin: 6px 0 0; opacity: 0.75; font-size: 0.8rem; }
+        .toolbar {
+            padding: 20px 28px 12px 28px;
+            background: #ffffff;
+            border-bottom: 1px solid #e9edf2;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            gap: 20px;
+            row-gap: 16px;
+        }
+        .ctrl-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .ctrl-group label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: #5b6e8c;
+            letter-spacing: 0.5px;
+        }
+        select, button, .file-label {
+            border-radius: 40px;
+            border: 1px solid #cfdee9;
+            padding: 8px 18px;
+            font-size: 0.85rem;
+            background: white;
+            font-weight: 500;
+            outline: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        select { background-color: #fefefe; min-width: 110px; }
+        button {
+            background: #f0f4f9;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        button.primary { background: #2c7da0; border-color: #2c7da0; color: white; }
+        button.primary:hover { background: #1f5e7a; transform: translateY(-1px); }
+        button.secondary { background: #2c3e4e; border-color: #2c3e4e; color: white; }
+        button.secondary:hover { background: #1f2f3c; }
+        button.success { background: #2d7d46; border-color: #2d7d46; color: white; }
+        button.success:hover { background: #1e5f34; transform: translateY(-1px); }
+        button.danger { background: #f8f9fc; border-color: #dce3ec; color: #a61e2c; }
+        button.danger:hover { background: #ffe9ec; border-color: #e07c8c; }
+        .file-label {
+            background: #eef2fa;
+            border: 1px dashed #8aa0bc;
+            padding: 8px 22px;
+            display: inline-block;
+        }
+        .file-input-wrapper { position: relative; }
+        #fileInput {
+            position: absolute;
+            opacity: 0;
+            width: 0.1px;
+            height: 0.1px;
+        }
+        .status-area {
+            margin: 12px 28px 0;
+            font-size: 0.8rem;
+            background: #f4f8fe;
+            border-radius: 60px;
+            padding: 6px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+        .badge {
+            background: #e9edf2;
+            border-radius: 60px;
+            padding: 4px 14px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: #2c5a74;
+        }
+        .badge-highlight {
+            background: #d4e2f0;
+            color: #0f3b5c;
+            font-weight: 700;
+        }
+        .preview-container { padding: 24px 28px 28px; background: #fbfdff; }
+        .canvas-holder {
+            display: flex;
+            justify-content: center;
+            overflow-x: auto;
+            background: #eef2f5;
+            border-radius: 28px;
+            padding: 20px;
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.03), 0 8px 20px rgba(0,0,0,0.08);
+        }
+        #renderArea {
+            background: white;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15);
+            border-radius: 20px;
+            overflow: hidden;
+            display: inline-block;
+            max-width: 100%;
+            padding: 12px;
+        }
+        #renderArea img, #renderArea canvas {
+            display: block;
+            width: auto;
+            height: auto;
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        .page-preview-item {
+            margin-bottom: 16px;
+            border-bottom: 2px dashed #e2e8f0;
+            padding-bottom: 12px;
+        }
+        .page-preview-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        .page-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #2c5a74;
+            background: #eaf0f6;
+            display: inline-block;
+            padding: 2px 14px;
+            border-radius: 40px;
+            margin-bottom: 6px;
+        }
+        .action-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 16px;
+        }
+        footer {
+            font-size: 0.7rem;
+            text-align: center;
+            padding: 14px;
+            color: #7f8c9b;
+            border-top: 1px solid #eef2f8;
+        }
+        @media (max-width: 860px) {
+            .toolbar { flex-direction: column; align-items: stretch; }
+            .ctrl-group { width: 100%; }
+            select, button { width: 100%; justify-content: center; }
+        }
+        .loader {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.7s linear infinite;
+            margin-left: 6px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .range-selectors {
+            display: flex;
+            flex-direction: row;
+            align-items: flex-end;
+            gap: 12px;
+            background: #fbfdff;
+            border-radius: 60px;
+        }
+        .range-selectors .ctrl-group { flex-direction: column; }
+        .grid-preview { display: flex; flex-direction: column; align-items: center; width: 100%; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="header">
+        <h1>📸 PDF 超清导出 (8倍采样 + 高质量JPEG)</h1>
+        <p>上传即预览 · 8倍超采样 · 导出长图(JPEG 质量0.98) · 逐页导出ZIP打包</p>
+    </div>
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <div class="ctrl-group file-input-wrapper">
+            <label>📂 PDF文件</label>
+            <input type="file" id="fileInput" accept="application/pdf" style="display: none;">
+            <button class="file-label" id="uploadBtn">📁 选择PDF (自动预览)</button>
+        </div>
+
+        <div class="range-selectors">
+            <div class="ctrl-group">
+                <label>起始页</label>
+                <select id="startPageSelect" style="min-width: 100px;">
+                    <option value="1">第 1 页</option>
+                </select>
+            </div>
+            <div class="ctrl-group">
+                <label>结束页</label>
+                <select id="endPageSelect" style="min-width: 100px;">
+                    <option value="1">第 1 页</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="ctrl-group">
+            <label>⚡ 超清采样</label>
+            <div class="badge badge-highlight" style="text-align:center;">8倍 (极清)</div>
+        </div>
+
+        <div class="ctrl-group">
+            <button id="exportBtn" class="secondary" disabled>💾 导出长图</button>
+        </div>
+
+        <div class="ctrl-group">
+            <button id="exportPagesBtn" class="success" disabled>📦 逐页导出 (ZIP)</button>
+        </div>
+
+        <div class="ctrl-group">
+            <button id="clearBtn" class="danger">🗑️ 清空</button>
+        </div>
+    </div>
+
+    <div class="status-area" id="statusBar">
+        <span>⚡ 就绪 | 请上传PDF</span>
+        <span id="pageInfo" class="badge">📄 未加载</span>
+    </div>
+
+    <div class="preview-container">
+        <div class="canvas-holder">
+            <div id="renderArea">
+                <div style="padding: 50px; text-align: center; color: #9aaec5;">📄 上传 PDF 后自动加载并预览所有页面 (8倍超清采样)</div>
+            </div>
+        </div>
+        <div class="action-row" id="actionRow"></div>
+    </div>
+    <footer>✅ 8倍超采样 · 导出JPEG质量0.98 · 长图导出为JPEG · 逐页导出打包为ZIP</footer>
+</div>
+
+<script>
+    // 配置 PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+    // DOM 元素
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const exportPagesBtn = document.getElementById('exportPagesBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const startPageSelect = document.getElementById('startPageSelect');
+    const endPageSelect = document.getElementById('endPageSelect');
+    const renderArea = document.getElementById('renderArea');
+    const statusSpan = document.querySelector('#statusBar span:first-child');
+    const pageInfoSpan = document.getElementById('pageInfo');
+
+    // ----- 超清参数配置 -----
+    const SCALE = 8;                // 8倍超采样 (大幅提升清晰度)
+    const JPEG_QUALITY = 0.98;      // 极高JPEG质量 (接近无损)
+    const PREVIEW_SCALE = 0.25;     // 预览缩略图比例 (适配屏幕)
+
+    // 全局状态
+    let currentPdfDoc = null;
+    let totalPagesCount = 0;
+    let currentFinalCanvas = null;      // 长图canvas
+    let currentPageCanvases = [];       // 存储每一页的canvas (高分辨率)
+    let currentFileName = "document";
+    let isRendering = false;
+
+    function setStatus(text, isError = false) {
+        statusSpan.innerHTML = isError ? `⚠️ ${text}` : `✨ ${text}`;
+        statusSpan.style.color = isError ? "#c0392b" : "#1f5e7a";
+    }
+
+    function updatePageSelectors(totalPages) {
+        startPageSelect.innerHTML = '';
+        endPageSelect.innerHTML = '';
+        for (let i = 1; i <= totalPages; i++) {
+            const optionStart = document.createElement('option');
+            optionStart.value = i;
+            optionStart.textContent = `第 ${i} 页`;
+            startPageSelect.appendChild(optionStart);
+            const optionEnd = document.createElement('option');
+            optionEnd.value = i;
+            optionEnd.textContent = `第 ${i} 页`;
+            endPageSelect.appendChild(optionEnd);
+        }
+        if (totalPages >= 1) {
+            startPageSelect.value = 1;
+            endPageSelect.value = totalPages;
+        }
+    }
+
+    function getSelectedPageRange() {
+        if (!currentPdfDoc || totalPagesCount === 0) return [];
+        let start = parseInt(startPageSelect.value, 10);
+        let end = parseInt(endPageSelect.value, 10);
+        if (isNaN(start)) start = 1;
+        if (isNaN(end)) end = totalPagesCount;
+        start = Math.min(Math.max(1, start), totalPagesCount);
+        end = Math.min(Math.max(1, end), totalPagesCount);
+        if (start > end) {
+            [start, end] = [end, start];
+            startPageSelect.value = start;
+            endPageSelect.value = end;
+        }
+        const pages = [];
+        for (let i = start; i <= end; i++) pages.push(i);
+        return pages;
+    }
+
+    async function loadPdf(file) {
+        if (!file || file.type !== 'application/pdf') {
+            setStatus("请选择有效的PDF文件", true);
+            return false;
+        }
+        let name = file.name.replace(/\.pdf$/i, '');
+        currentFileName = name.replace(/[\\/:*?"<>|]/g, '_') || "未命名文档";
+        setStatus(`加载中: ${file.name} ...`);
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            const pdfDoc = await loadingTask.promise;
+            currentPdfDoc = pdfDoc;
+            totalPagesCount = pdfDoc.numPages;
+            pageInfoSpan.innerText = `📄 ${totalPagesCount} 页 | ${currentFileName}.pdf`;
+            setStatus(`PDF 加载成功，共 ${totalPagesCount} 页。8倍超清渲染中...`);
+            updatePageSelectors(totalPagesCount);
+            await renderPreview();
+            return true;
+        } catch (err) {
+            console.error(err);
+            setStatus(`解析失败: ${err.message}`, true);
+            currentPdfDoc = null;
+            totalPagesCount = 0;
+            pageInfoSpan.innerText = "❌ 加载错误";
+            startPageSelect.innerHTML = '<option value="1">—</option>';
+            endPageSelect.innerHTML = '<option value="1">—</option>';
+            return false;
+        }
+    }
+
+    // 渲染预览 (8倍超采样)
+    async function renderPreview() {
+        if (!currentPdfDoc) {
+            setStatus("请先上传 PDF 文件", true);
+            return false;
+        }
+        if (isRendering) {
+            setStatus("正在渲染中，请稍候...", false);
+            return false;
+        }
+        const pagesToRender = getSelectedPageRange();
+        if (pagesToRender.length === 0) {
+            setStatus("当前范围无有效页面，请调整起止页码", true);
+            return false;
+        }
+
+        isRendering = true;
+        setStatus(`🎨 正在渲染 ${pagesToRender.length} 页预览 (8倍超清采样)...`);
+        renderArea.innerHTML = '<div style="padding: 50px; text-align: center;"><span class="loader" style="border-top-color:#2c7da0;"></span> 8倍超清渲染中，请稍候...</div>';
+
+        const scale = SCALE;
+        const pageCanvasList = [];
+        let totalHeight = 0;
+        let maxWidth = 0;
+
+        try {
+            for (let idx = 0; idx < pagesToRender.length; idx++) {
+                const pageNum = pagesToRender[idx];
+                setStatus(`渲染第 ${pageNum}/${pagesToRender.length} 页 (8倍)...`);
+                const page = await currentPdfDoc.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 1 });
+                const scaledWidth = viewport.width * scale;
+                const scaledHeight = viewport.height * scale;
+
+                const canvas = document.createElement('canvas');
+                canvas.width = scaledWidth;
+                canvas.height = scaledHeight;
+                const context = canvas.getContext('2d');
+                context.imageSmoothingEnabled = true;
+                context.imageSmoothingQuality = 'high';
+
+                await page.render({
+                    canvasContext: context,
+                    viewport: page.getViewport({ scale: scale }),
+                    background: 'white',
+                }).promise;
+
+                pageCanvasList.push(canvas);
+                totalHeight += canvas.height;
+                if (canvas.width > maxWidth) maxWidth = canvas.width;
+            }
+
+            currentPageCanvases = pageCanvasList;
+
+            // 构建预览 (使用 PREVIEW_SCALE 缩略)
+            renderArea.innerHTML = '';
+            const container = document.createElement('div');
+            container.className = 'grid-preview';
+
+            const previewScale = PREVIEW_SCALE;
+            for (let i = 0; i < pageCanvasList.length; i++) {
+                const canvas = pageCanvasList[i];
+                const pageNum = pagesToRender[i];
+                const wrapper = document.createElement('div');
+                wrapper.className = 'page-preview-item';
+                
+                const label = document.createElement('div');
+                label.className = 'page-label';
+                label.textContent = `📄 第 ${pageNum} 页 (8倍超清)`;
+                wrapper.appendChild(label);
+
+                const img = document.createElement('img');
+                const previewCanvas = document.createElement('canvas');
+                const pw = canvas.width * previewScale;
+                const ph = canvas.height * previewScale;
+                previewCanvas.width = pw;
+                previewCanvas.height = ph;
+                const ctx = previewCanvas.getContext('2d');
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(canvas, 0, 0, pw, ph);
+                img.src = previewCanvas.toDataURL('image/png');
+                img.style.maxWidth = '100%';
+                img.style.borderRadius = '8px';
+                img.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
+                wrapper.appendChild(img);
+                container.appendChild(wrapper);
+            }
+            renderArea.appendChild(container);
+
+            // 生成长图canvas (8倍超清拼接)
+            const finalCanvas = document.createElement('canvas');
+            finalCanvas.width = maxWidth;
+            finalCanvas.height = totalHeight;
+            const finalCtx = finalCanvas.getContext('2d');
+            finalCtx.fillStyle = '#FFFFFF';
+            finalCtx.fillRect(0, 0, maxWidth, totalHeight);
+
+            let currentY = 0;
+            for (const pageCanvas of pageCanvasList) {
+                const xOffset = (maxWidth - pageCanvas.width) / 2;
+                finalCtx.drawImage(pageCanvas, xOffset, currentY, pageCanvas.width, pageCanvas.height);
+                currentY += pageCanvas.height;
+            }
+            currentFinalCanvas = finalCanvas;
+
+            exportBtn.disabled = false;
+            exportPagesBtn.disabled = false;
+            setStatus(`✅ 预览完成！共 ${pagesToRender.length} 页，8倍超清采样。可导出长图或逐页导出(ZIP)`);
+            isRendering = false;
+            return true;
+        } catch (err) {
+            console.error(err);
+            setStatus(`渲染出错: ${err.message}`, true);
+            renderArea.innerHTML = `<div style="padding: 40px; text-align: center; color:#c0392b;">❌ 渲染失败，请检查PDF是否损坏或重试</div>`;
+            exportBtn.disabled = true;
+            exportPagesBtn.disabled = true;
+            isRendering = false;
+            return false;
+        }
+    }
+
+    // 导出长图为 JPEG (高质量)
+    function exportLongImage() {
+        if (!currentFinalCanvas) {
+            setStatus("没有可导出的长图，请先上传PDF", true);
+            return;
+        }
+        try {
+            const dataURL = currentFinalCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+            const link = document.createElement('a');
+            let exportName = `${currentFileName}.jpeg`;
+            exportName = exportName.replace(/[\\/:*?"<>|]/g, '_');
+            link.download = exportName;
+            link.href = dataURL;
+            link.click();
+            setStatus(`📸 已导出长图: ${exportName} (8倍超清, JPEG质量${JPEG_QUALITY})`);
+        } catch (err) {
+            setStatus(`导出失败: ${err.message}`, true);
+        }
+    }
+
+    // 逐页导出为 ZIP 压缩包 (高质量)
+    function exportPagesAsZip() {
+        if (!currentPageCanvases || currentPageCanvases.length === 0) {
+            setStatus("没有可导出的页面，请先上传PDF", true);
+            return;
+        }
+        const pagesToRender = getSelectedPageRange();
+        if (pagesToRender.length === 0) {
+            setStatus("当前范围无有效页面", true);
+            return;
+        }
+
+        if (typeof JSZip === 'undefined') {
+            setStatus("JSZip 库未加载，请检查网络连接", true);
+            return;
+        }
+
+        exportPagesBtn.disabled = true;
+        setStatus(`📦 正在打包 ${currentPageCanvases.length} 张高清图片为ZIP...`);
+
+        try {
+            const zip = new JSZip();
+            const folder = zip.folder(`${currentFileName}_逐页导出_8x`);
+
+            for (let i = 0; i < currentPageCanvases.length; i++) {
+                const canvas = currentPageCanvases[i];
+                const pageNum = pagesToRender[i];
+                // 使用高质量JPEG导出
+                const dataURL = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+                const byteString = atob(dataURL.split(',')[1]);
+                const mimeString = dataURL.split(',')[0].split(':')[1].split(';')[0];
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let j = 0; j < byteString.length; j++) {
+                    ia[j] = byteString.charCodeAt(j);
+                }
+                const blob = new Blob([ab], { type: mimeString });
+                const fileName = `${currentFileName}_第${pageNum}页.jpeg`;
+                folder.file(fileName, blob);
+            }
+
+            zip.generateAsync({ type: 'blob' }).then((content) => {
+                const zipFileName = `${currentFileName}_逐页导出_8x.zip`;
+                saveAs(content, zipFileName);
+                setStatus(`✅ 逐页导出完成！共导出 ${currentPageCanvases.length} 张高清图片，已打包为ZIP (8倍超清)`);
+                exportPagesBtn.disabled = false;
+            }).catch((err) => {
+                console.error(err);
+                setStatus(`ZIP生成失败: ${err.message}`, true);
+                exportPagesBtn.disabled = false;
+            });
+        } catch (err) {
+            console.error(err);
+            setStatus(`逐页导出出错: ${err.message}`, true);
+            exportPagesBtn.disabled = false;
+        }
+    }
+
+    function clearAll() {
+        renderArea.innerHTML = '<div style="padding: 50px; text-align: center; color: #9aaec5;">📄 上传 PDF 后自动加载并预览所有页面 (8倍超清采样)</div>';
+        currentFinalCanvas = null;
+        currentPageCanvases = [];
+        exportBtn.disabled = true;
+        exportPagesBtn.disabled = true;
+        setStatus("已清空，可重新上传PDF");
+    }
+
+    // ---- 事件绑定 ----
+    uploadBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        clearAll();
+        await loadPdf(file);
+        fileInput.value = '';
+    });
+
+    startPageSelect.addEventListener('change', async () => {
+        if (currentPdfDoc) await renderPreview();
+    });
+    endPageSelect.addEventListener('change', async () => {
+        if (currentPdfDoc) await renderPreview();
+    });
+
+    exportBtn.addEventListener('click', exportLongImage);
+    exportPagesBtn.addEventListener('click', exportPagesAsZip);
+    clearBtn.addEventListener('click', clearAll);
+
+    async function validateRange() {
+        if (!currentPdfDoc || totalPagesCount === 0) return;
+        let start = parseInt(startPageSelect.value, 10);
+        let end = parseInt(endPageSelect.value, 10);
+        if (isNaN(start) || isNaN(end)) return;
+        if (start > end) {
+            const tmp = startPageSelect.value;
+            startPageSelect.value = endPageSelect.value;
+            endPageSelect.value = tmp;
+            setStatus("起始页已自动调整 ≤ 结束页，重新渲染", false);
+            await renderPreview();
+        }
+    }
+    startPageSelect.addEventListener('change', validateRange);
+    endPageSelect.addEventListener('change', validateRange);
+
+    exportBtn.disabled = true;
+    exportPagesBtn.disabled = true;
+
+    function initEmptySelectors() {
+        startPageSelect.innerHTML = '<option value="1">— 无 PDF —</option>';
+        endPageSelect.innerHTML = '<option value="1">— 无 PDF —</option>';
+    }
+    initEmptySelectors();
+</script>
+</body>
+</html>
